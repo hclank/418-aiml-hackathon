@@ -1,0 +1,37 @@
+# TerraMind + TerraTorch — pinned versions known to work together.
+# Other version combinations break in interesting ways. If you must
+# upgrade, do it deliberately and re-test the load step in the README.
+
+terratorch
+diffusers
+
+# Core PyTorch — TerraMind targets PyTorch >= 2.1.
+torch
+torchvision
+pytorch-lightning
+
+# HuggingFace stack for model + dataset pulls.
+transformers
+huggingface-hub
+datasets
+
+# Geospatial helpers — most teams need these.
+rasterio
+shapely
+pyproj
+geopandas
+
+# Standard scientific Python.
+numpy  # numpy 2.x breaks several geospatial deps
+scipy
+scikit-learn
+pandas
+
+# Plotting + notebooks.
+matplotlib
+jupyter
+ipywidgets
+
+# Demo apps — optional but most teams want one.
+gradio       # easiest path to a quick demo UI
+# streamlit>=1.30.0  # uncomment if you prefer Streamlit
