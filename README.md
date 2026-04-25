@@ -1,6 +1,6 @@
 # 418 AIML Hackathon
 
-Final Ghost Fleet / TerraMind submission package:
+Final Ghost Fleet/TerraMind submission package:
 
 ```text
 AIML/submissions/Fantastic-Four
