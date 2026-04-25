@@ -65,8 +65,10 @@ python infer.py --detections sample_input\mock_detections.csv --ais sample_input
 Real-scene TerraMind inference, when extracted xView3 scenes are available:
 
 ```powershell
-python infer.py --scene-id 05bc615a9b0e1159t --scene-root D:\full --checkpoint artifacts\terramind_trainval\best.pt --detections-output out\terramind_trainval_tta_scene_detections.csv --max-candidates 128 --batch-size 2 --overview-max-dim 1024 --tta --tta-variants 4
+python infer.py --scene-id 05bc615a9b0e1159t --scene-root <SCENE_ROOT> --checkpoint artifacts\terramind_trainval\best.pt --detections-output out\terramind_trainval_tta_scene_detections.csv --max-candidates 128 --batch-size 2 --overview-max-dim 1024 --tta --tta-variants 4
 ```
+
+Replace `<SCENE_ROOT>` with the local path containing extracted xView3 scene folders such as `05bc615a9b0e1159t/VV_dB.tif` and `05bc615a9b0e1159t/VH_dB.tif`. On the original training machine this path was `D:\full`; on another machine it may be different.
 
 ## Reproducibility
 
@@ -79,21 +81,18 @@ pip install -r requirements.txt
 Train the final model configuration:
 
 ```powershell
-python train.py --backbone terramind-small --finetune-terramind --train-on-validation --available-only --scene-root D:\full --epochs 10 --batch-size 2 --lr 7e-5 --backbone-lr 5e-6 --output-dir artifacts\terramind_trainval --overwrite-output --scene-read-probe-size 256
+python train.py --backbone terramind-small --finetune-terramind --train-on-validation --available-only --scene-root <SCENE_ROOT> --epochs 10 --batch-size 2 --lr 7e-5 --backbone-lr 5e-6 --output-dir artifacts\terramind_trainval --overwrite-output --scene-read-probe-size 256
 ```
+
+Replace `<SCENE_ROOT>` with the actual extracted xView3 scene root on the machine running training. Do not use `D:\full` unless the scenes are actually stored there.
 
 Optional resumed fine-tuning:
 
 ```powershell
-python train.py --backbone terramind-small --finetune-terramind --train-on-validation --available-only --scene-root D:\full --resume-checkpoint artifacts\terramind_trainval\best.pt --epochs 5 --batch-size 2 --lr 3e-5 --backbone-lr 2e-6 --output-dir artifacts\terramind_trainval_long --overwrite-output --scene-read-probe-size 256
+python train.py --backbone terramind-small --finetune-terramind --train-on-validation --available-only --scene-root <SCENE_ROOT> --resume-checkpoint artifacts\terramind_trainval\best.pt --epochs 5 --batch-size 2 --lr 3e-5 --backbone-lr 2e-6 --output-dir artifacts\terramind_trainval_long --overwrite-output --scene-read-probe-size 256
 ```
 
-Prepare and validate the clean submission folder:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File prepare_submission.ps1 -Force
-python -B ..\Fantastic-Four\check_submission.py ..\Fantastic-Four
-```
+Replace `<SCENE_ROOT>` with the same extracted xView3 scene root used for the primary training run.
 
 ## Submission Contents
 
