@@ -2,12 +2,18 @@ import os
 import numpy as np
 import pandas as pd
 import rasterio
+import terratorch
 import matplotlib.pyplot as plt
 import matplotlib
 import warnings
 
 from rasterio.transform import rowcol
 from pyproj import Transformer
+
+try:
+    from terratorch.models import TerraMind
+except ImportError:
+    TerraMind = None
 
 matplotlib.use("Agg")
 warnings.filterwarnings("ignore")
@@ -22,6 +28,11 @@ os.makedirs(os.path.join(OUTPUT_DIR, "chips"), exist_ok=True)
 os.makedirs(os.path.join(OUTPUT_DIR, "chips", "VV"), exist_ok=True)
 os.makedirs(os.path.join(OUTPUT_DIR, "chips", "VH"), exist_ok=True)
 os.makedirs(os.path.join(OUTPUT_DIR, "plots"), exist_ok=True)
+
+LOAD_TERRAMIND = os.environ.get("LOAD_TERRAMIND", "0") == "1"
+model = None
+if LOAD_TERRAMIND and TerraMind is not None:
+    model = TerraMind.from_pretrained("ibm-nasa-geospatial/terramind-1.0-base")
 
 
 def sample_raster_at_point(tif_path, lat, lon):
@@ -72,13 +83,10 @@ def extract_chip(array, row, col, chip_size=64):
     return chip
 
 
-def normalize_sar(array):
-    epsilon = 1e-10
-    db = 10 * np.log10(array + epsilon)
-    db_clipped = np.clip(db, -30, 0)
-    normalized = (db_clipped - (-30)) / (0 - (-30))
-
-    return normalized.astype(np.float32)
+def normalize_sar_db(array):
+    arr = np.nan_to_num(array, nan=-30.0, neginf=-30.0, posinf=0.0).astype(np.float32)
+    arr = np.clip(arr, -30.0, 0.0)
+    return (arr + 30.0) / 30.0
 
 
 train_raw = pd.read_csv(TRAIN_CSV)
@@ -91,16 +99,6 @@ tiny_scene_ids = [
     if os.path.isdir(os.path.join(TINY_DIR, folder))
 ]
 
-# get the folders directories aswell as the files in each folder
-for sid in tiny_scene_ids:
-    scene_path = os.path.join(TINY_DIR, sid)
-    files = os.listdir(scene_path)
-
-# since our csv files have 500+ rows of data which is intended for the larger datasets... we have to shrink them down to match our small dataset
-train_tiny = train_raw[train_raw["scene_id"].isin(tiny_scene_ids)].copy()
-val_tiny = val_raw[val_raw["scene_id"].isin(tiny_scene_ids)].copy()
-
-
 def clean_labels(df: pd.DataFrame, name="dataframe"):
     df = df[df["is_vessel"] == True]
     df = df.dropna(subset=["detect_lat", "detect_lon"])
@@ -110,12 +108,43 @@ def clean_labels(df: pd.DataFrame, name="dataframe"):
     return df
 
 
-train_tiny = clean_labels(train_tiny, name="train")
-val_tiny = clean_labels(val_tiny, name="validation")
+def split_scenes_with_both_classes(df, val_frac=0.3, seed=42, max_tries=5000):
+    scenes = df["scene_id"].drop_duplicates().to_numpy()
+    n_val = max(1, int(round(len(scenes) * val_frac)))
+    rng = np.random.default_rng(seed)
 
-# check whether this ship is dark or not
-train_tiny["is_dark"] = train_tiny["source"].str.upper().str.strip() != "AIS"
-val_tiny["is_dark"] = val_tiny["source"].str.upper().str.strip() != "AIS"
+    for _ in range(max_tries):
+        perm = rng.permutation(scenes)
+        val_scenes = set(perm[:n_val])
+        train_scenes = set(perm[n_val:])
+
+        train_df = df[df["scene_id"].isin(train_scenes)].copy()
+        val_df = df[df["scene_id"].isin(val_scenes)].copy()
+
+        # Enforce class presence in both splits and avoid empty splits.
+        if (
+            len(train_df) > 0
+            and len(val_df) > 0
+            and train_df["is_dark"].nunique() == 2
+            and val_df["is_dark"].nunique() == 2
+        ):
+            return train_df.reset_index(drop=True), val_df.reset_index(drop=True)
+
+    raise RuntimeError("Could not find a scene split with both classes in train and val")
+
+
+# Build tiny split from all available labels, then re-split by scene.
+all_raw = pd.concat([train_raw, val_raw], ignore_index=True)
+tiny_all = all_raw[all_raw["scene_id"].isin(tiny_scene_ids)].copy()
+tiny_all = clean_labels(tiny_all, name="tiny_all")
+tiny_all["is_dark"] = tiny_all["source"].str.upper().str.strip() != "AIS"
+
+train_tiny, val_tiny = split_scenes_with_both_classes(tiny_all, val_frac=0.3, seed=42)
+
+split_dir = os.path.join(OUTPUT_DIR, "splits")
+os.makedirs(split_dir, exist_ok=True)
+train_tiny.to_csv(os.path.join(split_dir, "train_split.csv"), index=False)
+val_tiny.to_csv(os.path.join(split_dir, "val_split.csv"), index=False)
 
 
 AUXILIARY_RASTERS = {
@@ -158,8 +187,10 @@ train_features.to_csv(os.path.join(OUTPUT_DIR, "train_features.csv"), index=Fals
 val_features.to_csv(os.path.join(OUTPUT_DIR, "val_features.csv"), index=False)
 
 
-print(train_tiny["source"].unique())
-print(train_raw["source"].value_counts())
+print("Train class counts:\n", train_tiny["is_dark"].value_counts())
+print("Val class counts:\n", val_tiny["is_dark"].value_counts())
+print("Train scenes:", train_tiny["scene_id"].nunique())
+print("Val scenes:", val_tiny["scene_id"].nunique())
 
 
 CHIP_SIZE = 64
@@ -168,6 +199,7 @@ CHIP_SIZE = 64
 def extract_and_save_chips(df: pd.DataFrame, tiny_dir, output_chip_dir, split_name):
     chip_manifest = []
     raster_cache = {}
+    transformer_cache = {}
 
     for i, row in df.iterrows():
         scene_id = row["scene_id"]
@@ -189,42 +221,58 @@ def extract_and_save_chips(df: pd.DataFrame, tiny_dir, output_chip_dir, split_na
                     raster_cache[cache_key] = {
                         "data": src.read(1).astype(np.float32),
                         "transform": src.transform,
+                        "crs": src.crs,
+                        "height": src.height,
+                        "width": src.width,
                     }
 
             cached = raster_cache[cache_key]
             array = cached["data"]
             transform = cached["transform"]
+            raster_crs = cached["crs"]
+            crs_key = str(raster_crs)
 
-            r, c = rowcol(transform, row["detect_lon"], row["detect_lat"])
+            if crs_key not in transformer_cache:
+                transformer_cache[crs_key] = Transformer.from_crs(
+                    "EPSG:4326", raster_crs, always_xy=True
+                )
+
+            x, y = transformer_cache[crs_key].transform(
+                row["detect_lon"], row["detect_lat"]
+            )
+            r, c = rowcol(transform, x, y)
+
+            if r < 0 or c < 0 or r >= cached["height"] or c >= cached["width"]:
+                valid = False
+                break
+
             chip = extract_chip(array, r, c, chip_size=CHIP_SIZE)
-            chip = normalize_sar(chip)
+            chip = normalize_sar_db(chip)
             chips[band] = chip
 
-            if not valid:
-                continue
+        if not valid:
+            continue
 
-            stacked_chip = np.stack([chips["VV_dB"], chips["VV_dB"]], axis=0)
+        stacked_chip = np.stack([chips["VV_dB"], chips["VH_dB"]], axis=0)
 
-            lat_str = f"{row['detect_lat']:.4f}".replace(".", "p").replace("-", "n")
-            lon_str = f"{row['detect_lon']:.4f}".replace(".", "p").replace("-", "n")
-            chip_filename = f"{scene_id}__{lat_str}_{lon_str}.npy"
-            chip_path = os.path.join(output_chip_dir, chip_filename)
+        lat_str = f"{row['detect_lat']:.4f}".replace(".", "p").replace("-", "n")
+        lon_str = f"{row['detect_lon']:.4f}".replace(".", "p").replace("-", "n")
+        chip_filename = f"{scene_id}__{lat_str}_{lon_str}.npy"
+        chip_path = os.path.join(output_chip_dir, chip_filename)
 
-            np.save(chip_path, stacked_chip)
+        np.save(chip_path, stacked_chip)
 
-            chip_manifest.append(
-                {
-                    "chip_path": chip_path,
-                    "scene_id": scene_id,
-                    "detect_lat": row["detect_lat"],
-                    "detect_lon": row["detect_lon"],
-                    "is_dark": row["is_dark"],
-                }
-            )
+        chip_manifest.append(
+            {
+                "chip_path": chip_path,
+                "scene_id": scene_id,
+                "detect_lat": row["detect_lat"],
+                "detect_lon": row["detect_lon"],
+                "is_dark": row["is_dark"],
+            }
+        )
 
-            del raster_cache
-
-            return pd.DataFrame(chip_manifest)
+    return pd.DataFrame(chip_manifest)
 
 
 chip_dir = os.path.join(OUTPUT_DIR, "chips")
