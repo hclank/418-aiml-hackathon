@@ -334,6 +334,35 @@ def build_optimizer(
     )
 
 
+def load_model_weights_for_resume(
+    model: nn.Module,
+    checkpoint_path: Path,
+    device: torch.device,
+) -> tuple[int, dict[str, object]]:
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    checkpoint_config = checkpoint.get("config", {})
+    source_had_frozen_backbone = bool(checkpoint_config.get("terramind_freeze", False))
+    incompatible = model.load_state_dict(
+        checkpoint["model_state"],
+        strict=not source_had_frozen_backbone,
+    )
+    if incompatible.unexpected_keys:
+        raise SystemExit(
+            f"Resume checkpoint has unexpected keys: {incompatible.unexpected_keys[:10]}"
+        )
+    if incompatible.missing_keys and not source_had_frozen_backbone:
+        raise SystemExit(
+            f"Resume checkpoint is missing keys: {incompatible.missing_keys[:10]}"
+        )
+    if incompatible.missing_keys:
+        print(
+            "Resume checkpoint omitted frozen TerraMind keys; pretrained TerraMind "
+            "weights will be loaded by terratorch."
+        )
+    epoch = int(checkpoint.get("epoch", 0))
+    return epoch, checkpoint
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Train the Ghost Fleet SAR patch classifier on xView3 metadata."
@@ -369,6 +398,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite-output",
         action="store_true",
         help="Delete --output-dir before training so metrics/checkpoints are from one clean run.",
+    )
+    parser.add_argument(
+        "--resume-checkpoint",
+        type=Path,
+        help="Load model weights from an existing train.py checkpoint before training. "
+        "--epochs then means additional epochs to run.",
     )
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch-size", type=int, default=64)
@@ -554,6 +589,19 @@ def main() -> int:
         terramind_input_size=args.terramind_input_size,
         terramind_sar_input=args.terramind_sar_input,
     ).to(device)
+    resumed_from_epoch = 0
+    resumed_checkpoint: dict[str, object] | None = None
+    if args.resume_checkpoint is not None:
+        resumed_from_epoch, resumed_checkpoint = load_model_weights_for_resume(
+            model,
+            args.resume_checkpoint,
+            device,
+        )
+        print(
+            f"Loaded resume checkpoint {args.resume_checkpoint} "
+            f"from epoch {resumed_from_epoch}"
+        )
+
     optimizer = build_optimizer(
         model,
         backbone=args.backbone,
@@ -578,7 +626,8 @@ def main() -> int:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     metrics_log_path = args.output_dir / "metrics.jsonl"
 
-    for epoch in range(1, args.epochs + 1):
+    for local_epoch in range(1, args.epochs + 1):
+        epoch = resumed_from_epoch + local_epoch
         train_metrics = train_one_epoch(
             model,
             train_loader,
@@ -626,6 +675,13 @@ def main() -> int:
             "val_csv": str(args.val_csv) if args.val_csv is not None else "",
             "train_on_validation": args.train_on_validation,
             "val_fraction": args.val_fraction,
+            "resume_checkpoint": str(args.resume_checkpoint)
+            if args.resume_checkpoint is not None
+            else "",
+            "resumed_from_epoch": resumed_from_epoch,
+            "resume_checkpoint_metrics": (
+                resumed_checkpoint.get("metrics", {}) if resumed_checkpoint is not None else {}
+            ),
             "checkpoint_note": (
                 "Frozen TerraMind weights are excluded from this checkpoint "
                 "and loaded from Hugging Face by terratorch at runtime."

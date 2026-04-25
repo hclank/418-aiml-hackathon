@@ -13,6 +13,24 @@ from src.ghost_fleet.alerts import (
 )
 
 
+def build_tta_crops(crop, variants: int):
+    import numpy as np
+
+    transposed = np.transpose(crop, (0, 2, 1))
+    transforms = [
+        crop,
+        crop[:, :, ::-1],
+        crop[:, ::-1, :],
+        crop[:, ::-1, ::-1],
+        transposed,
+        transposed[:, :, ::-1],
+        transposed[:, ::-1, :],
+        transposed[:, ::-1, ::-1],
+    ]
+    count = 8 if variants >= 8 else 4
+    return [np.ascontiguousarray(item) for item in transforms[:count]]
+
+
 def detect_scene(args: argparse.Namespace) -> list[Detection]:
     import numpy as np
     import torch
@@ -44,6 +62,7 @@ def detect_scene(args: argparse.Namespace) -> list[Detection]:
         if args.min_vessel_score is not None
         else float(checkpoint_config.get("best_vessel_threshold", 0.5))
     )
+    args.resolved_min_vessel_score = min_vessel_score
 
     try:
         scene_paths = find_scene_paths(args.scene_root, args.scene_id)
@@ -90,14 +109,30 @@ def detect_scene(args: argparse.Namespace) -> list[Detection]:
             )
             crops.append(crop)
 
-        batch = torch.from_numpy(np.stack(crops)).float().to(device)
+        if args.tta:
+            tta_crops = []
+            for crop in crops:
+                tta_crops.extend(build_tta_crops(crop, args.tta_variants))
+            tta_count = len(tta_crops) // len(crops)
+            batch = torch.from_numpy(np.stack(tta_crops)).float().to(device)
+        else:
+            tta_count = 1
+            batch = torch.from_numpy(np.stack(crops)).float().to(device)
+
         with torch.no_grad():
             outputs = model(batch)
-            vessel_scores = torch.sigmoid(outputs["vessel_logits"]).cpu().numpy()
-            fishing_scores = torch.sigmoid(outputs["fishing_logits"]).cpu().numpy()
-            length_scores_m = length_scaled_to_meters(
-                outputs["length_scaled"]
-            ).cpu().numpy()
+            vessel_scores_tensor = torch.sigmoid(outputs["vessel_logits"])
+            fishing_scores_tensor = torch.sigmoid(outputs["fishing_logits"])
+            length_scores_tensor = length_scaled_to_meters(outputs["length_scaled"])
+
+            if args.tta:
+                vessel_scores_tensor = vessel_scores_tensor.view(len(crops), tta_count).mean(dim=1)
+                fishing_scores_tensor = fishing_scores_tensor.view(len(crops), tta_count).mean(dim=1)
+                length_scores_tensor = length_scores_tensor.view(len(crops), tta_count).mean(dim=1)
+
+            vessel_scores = vessel_scores_tensor.cpu().numpy()
+            fishing_scores = fishing_scores_tensor.cpu().numpy()
+            length_scores_m = length_scores_tensor.cpu().numpy()
 
         for candidate, vessel_score, fishing_score, length_m in zip(
             batch_candidates,
@@ -145,11 +180,13 @@ def run_csv_alert_mode(args: argparse.Namespace) -> int:
 
     detections = load_detections(args.detections)
     ais_contacts = load_ais_cache(args.ais)
+    min_score = args.min_score if args.min_score is not None else 0.5
+    min_vessel_score = args.min_vessel_score if args.min_vessel_score is not None else 0.5
     alerts = generate_alerts(
         detections=detections,
         ais_contacts=ais_contacts,
-        min_score=args.min_score,
-        min_vessel_score=args.min_vessel_score if args.min_vessel_score is not None else 0.5,
+        min_score=min_score,
+        min_vessel_score=min_vessel_score,
         match_radius_m=args.match_radius_m,
     )
     if args.limit > 0:
@@ -191,11 +228,17 @@ def run_scene_mode(args: argparse.Namespace) -> int:
         raise SystemExit("--scene-id mode with --ais requires --output.")
 
     ais_contacts = load_ais_cache(args.ais)
+    min_vessel_score = (
+        args.min_vessel_score
+        if args.min_vessel_score is not None
+        else float(getattr(args, "resolved_min_vessel_score", 0.5))
+    )
+    min_score = args.min_score if args.min_score is not None else min_vessel_score
     alerts = generate_alerts(
         detections=detections,
         ais_contacts=ais_contacts,
-        min_score=args.min_score,
-        min_vessel_score=args.min_vessel_score if args.min_vessel_score is not None else 0.5,
+        min_score=min_score,
+        min_vessel_score=min_vessel_score,
         match_radius_m=args.match_radius_m,
     )
     if args.limit > 0:
@@ -223,7 +266,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ais", type=Path, help="CSV of AIS contacts")
     parser.add_argument("--output", type=Path, help="Path to alerts JSON output")
     parser.add_argument("--match-radius-m", type=float, default=1500.0)
-    parser.add_argument("--min-score", type=float, default=0.5)
+    parser.add_argument(
+        "--min-score",
+        type=float,
+        help="Minimum generic score for alerts. Defaults to 0.5 in CSV mode and "
+        "to the vessel threshold in scene mode.",
+    )
     parser.add_argument("--min-vessel-score", type=float)
     parser.add_argument("--limit", type=int, default=0)
 
@@ -247,6 +295,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--proposal-quantile", type=float, default=0.999)
     parser.add_argument("--proposal-min-distance", type=int, default=10)
     parser.add_argument("--overview-max-dim", type=int, default=2048)
+    parser.add_argument(
+        "--tta",
+        action="store_true",
+        help="Average model scores over flip/transpose test-time augmentations.",
+    )
+    parser.add_argument(
+        "--tta-variants",
+        type=int,
+        choices=(4, 8),
+        default=4,
+        help="Number of test-time augmentation variants per crop.",
+    )
 
     return parser
 

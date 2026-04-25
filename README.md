@@ -1,12 +1,12 @@
 # 418 AIML Hackathon
 
-Final Ghost Fleet/TerraMind submission package:
+Final AIML track submission package:
 
 ```text
 AIML/submissions/Fantastic-Four
 ```
 
-That folder contains the runnable code, requirements, docs, sample inputs, validation scripts, and the final `terramind_trainval` checkpoint. The raw xView3 scene rasters and downloaded archives are intentionally not committed.
+The package contains the Ghost Fleet Trigger solution: TerraMind-based SAR vessel scoring, AIS non-match alerting, requirements, sample inputs, metrics, generated detections, validation scripts, and the selected `terramind_trainval` checkpoint. Raw xView3 scene rasters and downloaded archives are intentionally not committed.
 
 Main entry points:
 

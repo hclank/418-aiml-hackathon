@@ -1,50 +1,78 @@
-# 5-Minute Presentation Outline
+# Ghost Fleet Trigger: Presentation Outline
 
-## Slide 1 - Customer
+## Slide 1 - Mission Need
 
-Coast guards and sanctions-enforcement teams need a short list of suspicious vessels now. Dark ships turn off AIS, so AIS-only monitoring misses the highest-risk targets.
+Coast guards and sanctions-enforcement teams need a short list of suspicious vessels, not raw satellite scenes. AIS-only monitoring fails when vessels disable or spoof their transponders. SAR imagery provides an independent sensing layer that works at night and through cloud cover.
 
-## Slide 2 - Data And Model
+Key claim: the system downlinks actionable targets instead of gigabytes of imagery.
 
-Input is xView3 Sentinel-1 SAR. The final model path uses TerraMind-1.0-small over standardized VV/VH crops, then task heads for vessel probability, fishing probability, and length. The strongest run fine-tunes TerraMind with a lower encoder learning rate and uses the SAR-CNN only as a baseline. A local AIS cache is used after detection to suppress vessels that already have a matching AIS contact.
+## Slide 2 - System Architecture
 
-## Slide 3 - Demo
+Input: xView3 Sentinel-1 SAR scenes with VV/VH bands.
 
-Run:
+Pipeline:
 
-```bash
-python infer.py --detections sample_input/mock_detections.csv --ais sample_input/mock_ais.csv --output out/alerts.json
-```
+- SAR proposal generator identifies bright, high-contrast, small-object candidates.
+- TerraMind-1.0-small scores each crop for vessel probability, fishing probability, and length.
+- Calibrated thresholding converts scores into candidate vessel detections.
+- Local AIS matching suppresses vessels that already have a nearby AIS contact.
+- The downlink payload is a compact dark-vessel alert.
 
-Show the console output and `out/alerts.json`: one candidate has no nearby AIS match and becomes the downlink alert.
+## Slide 3 - Why TerraMind
 
-## Slide 4 - Numbers
+TerraMind is a geospatial foundation model, so the solution starts from a pretrained Earth-observation representation instead of a random CNN. The submission fine-tunes TerraMind-small on xView3 SAR crops and keeps a SAR-CNN only as a comparison baseline.
 
-Use the validation table from `README.md`.
+Operational fit:
 
-| Method | Data | Vessel F1 | Fishing F1 | Length MAE |
+- TerraMind-small is compact enough for the track.
+- The checkpoint is under the 200 MB package limit.
+- Inference returns a small alert JSON/CSV payload.
+
+## Slide 4 - Results
+
+Preferred checkpoint: `artifacts/terramind_trainval/best.pt`.
+
+| Method | Data Split | Vessel F1 | Fishing F1 | Length MAE |
 |---|---|---:|---:|---:|
 | SAR-CNN baseline | tiny | 0.367 | 0.421 | 40.9 m |
-| TerraMind-small fine-tuned | tiny | 0.822 | 0.441 | 39.1 m |
-| TerraMind-small fine-tuned | larger subset | 0.637 | 0.468 | 37.4 m |
-| TerraMind-small fine-tuned | train + validation scenes | 0.852 | 0.845 | 26.8 m |
+| TerraMind fine-tuned | tiny | 0.822 | 0.441 | 39.1 m |
+| TerraMind fine-tuned | larger available subset | 0.637 | 0.468 | 37.4 m |
+| TerraMind fine-tuned | train+validation, fresh holdout | 0.852 | 0.845 | 26.8 m |
+| TerraMind resumed fine-tune | train+validation, fresh holdout | 0.848 | 0.830 | 26.3 m |
 
-Also show:
+Interpretation: the resumed run slightly improves length error, but the primary checkpoint remains the best vessel/fishing detector and is the one packaged for submission.
 
-- Model size: 21.8M parameters, about 41.6 MB at FP16.
-- Batch-1 latency: 29.2 ms median on local CPU after cache warmup.
-- Bandwidth comparison: xView3 SAR rasters are GB-scale; alert JSON is KB-scale.
+## Slide 5 - Demo Flow
 
-## Slide 5 - Limits And Next Week
+Command for the fast AIS-fusion demo:
 
-Honest limits:
+```powershell
+python infer.py --detections sample_input\mock_detections.csv --ais sample_input\mock_ais.csv --output out\alerts.json
+```
 
-- xView3 does not provide tanker/cargo labels, so the demo reports vessel/fishing/length only.
-- AIS matching uses a local CSV cache, not a live AIS feed.
-- The larger local run still covers only the downloaded subset, not the full xView3 release.
+Expected story:
 
-Next week:
+- The model detection list contains candidate vessels.
+- The AIS cache contains known cooperative vessels.
+- A detection without a nearby AIS match becomes the downlink alert.
 
-- Re-download corrupt/missing xView3 archives and train on the full release.
-- Calibrate operating threshold for high recall.
-- Add temporal tracking across multiple passes.
+Real-scene command if local xView3 scenes are present:
+
+```powershell
+python infer.py --scene-id 05bc615a9b0e1159t --scene-root D:\full --checkpoint artifacts\terramind_trainval\best.pt --detections-output out\terramind_trainval_tta_scene_detections.csv --max-candidates 128 --batch-size 2 --overview-max-dim 1024 --tta --tta-variants 4
+```
+
+## Slide 6 - Honest Limits And Next Steps
+
+Current limits:
+
+- xView3 supports vessel/fishing/length labels, not tanker/cargo/naval labels.
+- Dark-vessel status is produced by AIS fusion, not directly by the model.
+- The demo uses a local AIS CSV cache, not a live AIS stream.
+- The local training set is still a subset of the full xView3 release.
+
+Next steps:
+
+- Complete full-scene xView3 training.
+- Add real AIS ingestion and temporal vessel tracking.
+- Tune operating threshold for customer preference: recall-first coast guard mode or precision-first analyst mode.

@@ -75,7 +75,7 @@ if (Test-Path $MetricsSource) {
 $ArtifactsSource = Join-Path $Source "artifacts"
 if (Test-Path $ArtifactsSource) {
     $PreferredRun = $null
-    foreach ($RunName in @("terramind_trainval", "terramind_moredata", "terramind_finetuned", "terramind_small")) {
+    foreach ($RunName in @("terramind_trainval", "terramind_trainval_long", "terramind_moredata", "terramind_finetuned", "terramind_small")) {
         $CandidateRun = Join-Path $ArtifactsSource $RunName
         if (Test-Path $CandidateRun) {
             $PreferredRun = $CandidateRun
@@ -97,7 +97,7 @@ if (Test-Path $ArtifactsSource) {
 
 $OutTarget = Join-Path $Target "out"
 New-Item -ItemType Directory -Force $OutTarget | Out-Null
-foreach ($File in @("tiny_detections.csv", "tiny_detections_improved.csv", "terramind_scene_detections.csv", "terramind_finetuned_scene_detections.csv", "terramind_moredata_scene_detections.csv", "terramind_trainval_scene_detections.csv")) {
+foreach ($File in @("tiny_detections.csv", "tiny_detections_improved.csv", "terramind_scene_detections.csv", "terramind_finetuned_scene_detections.csv", "terramind_moredata_scene_detections.csv", "terramind_trainval_scene_detections.csv", "terramind_trainval_tta_scene_detections.csv", "terramind_trainval_long_scene_detections.csv")) {
     $From = Join-Path $Source "out\$File"
     if (Test-Path $From) {
         Copy-Item -LiteralPath $From -Destination (Join-Path $OutTarget $File)
