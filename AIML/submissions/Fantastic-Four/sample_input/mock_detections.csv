@@ -1,0 +1,4 @@
+scene_id,detection_id,lat,lon,score,is_vessel_score,is_fishing_score,vessel_length_m
+scene-001,det-001,11.92031,75.32102,0.94,0.96,0.08,182.0
+scene-001,det-002,11.93400,75.33450,0.88,0.91,0.83,34.0
+scene-001,det-003,11.90040,75.30010,0.79,0.48,0.10,120.0
