@@ -53,6 +53,8 @@ The first run uses xView3 tiny dataset. The larger run uses local xView3 subset.
 | TerraMind-small fine-tuned | train+validation, fresh holdout | 0.852 | 0.855 | 0.845 | 26.8 m |
 | TerraMind-small resumed fine-tune | train+validation, fresh holdout | 0.848 | 0.851 | 0.830 | 26.3 m |
 
+ the baseline CNN is more conservative and gets higher precision, but TerraMind is much better for the actual coast-guard use case because it catches far more vessels. Recall jumps from 0.517 to 0.922, which means it misses far fewer ships.
+
 TerraMind-small run is the main model path. The training and validation run is the preferrable checkpoint. We can also measure the operational output: detections are made into AIS-unmatched alerts and the demo command gives one dark-vessel-style alert from 3 candidates and 2 AIS contacts.
 
 ## 4. What is the oribital compute story?
@@ -77,3 +79,7 @@ Real-scene TerraMind inference, when extracted xView3 scenes are available:
 ```bash
 python infer.py --scene-id 05bc615a9b0e1159t --scene-root <SCENE_ROOT> --checkpoint artifacts\terramind_trainval\best.pt --detections-output out\terramind_trainval_tta_scene_detections.csv --max-candidates 128 --batch-size 2 --overview-max-dim 1024 --tta --tta-variants 4
 ```
+
+## Links to Datasets
+
+xView3: https://iuu.xview.us/download-links
