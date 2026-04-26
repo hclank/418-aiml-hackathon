@@ -1,12 +1,12 @@
-# Fantastic-Four: Ghost Vessel Detector
+# Fantastic-Four: Ghost Fleet Trigger
 
-## Summary
+## Executive Summary
 
 Ghost Fleet Trigger is an onboard maritime-security pipeline that converts xView3 Sentinel-1 SAR imagery into compact dark-vessel alerts. The system uses TerraMind-1.0-small to score vessel candidates from SAR crops, estimates fishing probability and vessel length, then cross-matches detections against a local AIS cache. A detection with no nearby AIS signature is emitted as a high-value law-enforcement alert instead of downlinking the full SAR scene.
 
 Target users include coast guards, sanctions-enforcement teams, illegal-fishing monitors, and commodity-risk analysts.
 
-## The Problem
+## Problem
 
 AIS is a cooperative broadcast system: vessels announce their position when the transponder is on and honest. Illegal fishing vessels, sanctions evasions, and ship-to-ship transfers can avoid normal monitoring by disabling or spoofing AIS. SAR imagery provides an independent observation channel because radar can detect vessels at night and through cloud cover.
 
@@ -40,7 +40,7 @@ Training uses the xView3 maritime SAR metadata and extracted Sentinel-1 scene ra
 
 xView3 supports vessel detection, fishing classification, and length estimation. It does not provide tanker/cargo/naval labels, so this submission does not claim those classes.
 
-## The Results :D
+## Results
 
 The preferred final checkpoint is `artifacts/terramind_trainval/best.pt`. It was trained on the locally available train+validation scene pool with a fresh scene-level holdout, so validation scenes used for scoring were not also used for training.
 
@@ -70,7 +70,9 @@ python infer.py --scene-id 05bc615a9b0e1159t --scene-root <SCENE_ROOT> --checkpo
 
 Replace `<SCENE_ROOT>` with the local path containing extracted xView3 scene folders such as `05bc615a9b0e1159t/VV_dB.tif` and `05bc615a9b0e1159t/VH_dB.tif`. On the original training machine this path was `D:\full`; on another machine it may be different.
 
-## To Run This
+Windows path syntax matters: use `D:\full`, not `:D\full`.
+
+## Reproducibility
 
 Install dependencies:
 
@@ -86,6 +88,8 @@ python train.py --backbone terramind-small --finetune-terramind --train-on-valid
 
 Replace `<SCENE_ROOT>` with the actual extracted xView3 scene root on the machine running training. Do not use `D:\full` unless the scenes are actually stored there.
 
+Windows path syntax matters: use `D:\full`, not `:D\full`.
+
 Optional resumed fine-tuning:
 
 ```powershell
@@ -94,11 +98,11 @@ python train.py --backbone terramind-small --finetune-terramind --train-on-valid
 
 Replace `<SCENE_ROOT>` with the same extracted xView3 scene root used for the primary training run.
 
-## Submitted Contents
+## Submission Contents
 
-The final `Fantastic-Four` folder contains source code, requirements, sample inputs and outputs, metrics, generated detection CSVs, and the selected checkpoint excludinng the xView3 rasters and downloaded scenes.
+The final `Fantastic-Four` folder contains source code, requirements, sample inputs, metrics, generated detection CSVs, and the selected checkpoint. It intentionally excludes raw xView3 rasters and downloaded archives.
 
-## Limitations :(
+## Limitations
 
 - Dark-vessel status is not a direct xView3 label. It is inferred by fusing SAR detections with AIS non-matches.
 - AIS matching uses a local CSV cache for the demo, not a live AIS feed.

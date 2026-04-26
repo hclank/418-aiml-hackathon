@@ -31,6 +31,22 @@ def build_tta_crops(crop, variants: int):
     return [np.ascontiguousarray(item) for item in transforms[:count]]
 
 
+def _scene_root_hint(scene_root: Path) -> str:
+    scene_root_text = str(scene_root)
+    hint = (
+        "Expected --scene-root to point at the directory containing extracted "
+        "xView3 scene folders, for example D:\\full on Windows or "
+        "/mnt/data/xview3/full on Linux."
+    )
+    if scene_root_text.startswith(":") and len(scene_root_text) >= 2:
+        hint += (
+            f" The provided value '{scene_root_text}' starts with ':'. "
+            "For a Windows drive path, put the drive letter before the colon: "
+            "use D:\\full, not :D\\full."
+        )
+    return hint
+
+
 def detect_scene(args: argparse.Namespace) -> list[Detection]:
     import numpy as np
     import torch
@@ -69,8 +85,7 @@ def detect_scene(args: argparse.Namespace) -> list[Detection]:
     except FileNotFoundError as exc:
         raise SystemExit(
             f"{exc}\n"
-            "Download and extract the xView3 scene archives into data/xview3/full "
-            "before using --scene-id mode."
+            f"{_scene_root_hint(args.scene_root)}"
         ) from exc
     overview_image, scene_metadata, row_scale, col_scale = read_scene_overview(
         scene_paths,
